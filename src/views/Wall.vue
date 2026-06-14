@@ -71,17 +71,22 @@
         </svg>
 
         <div 
-          v-for="letter in displayedLetters" 
+          v-for="(letter, groupIdx) in displayedLetters" 
           :key="'group-' + letter.conversation.id"
           class="letter-group"
+          :class="{ 'group-search-highlight': highlightedConversationId === letter.conversation.id }"
           :style="getGroupStyle(letter)"
+          :ref="el => setGroupRef(letter, el)"
         >
           <div class="group-title">
-            <h3>{{ letter.conversation.name }}</h3>
+            <h3>
+              <span v-if="highlightedConversationId === letter.conversation.id" class="target-indicator">🎯 </span>
+              {{ letter.conversation.name }}
+            </h3>
             <span class="group-score">情书指数 {{ letter.loveScore }}</span>
           </div>
 
-          <div class="messages-grid">
+          <div class="messages-grid" :ref="el => setGridRef(letter, el)">
             <div
               v-for="(msg, idx) in letter.highlightedMessages"
               :key="msg.id"
@@ -228,7 +233,11 @@ const hangUpOptions = ref({
  anonymous: true
 });
 const messageRefs = ref({});
+const groupRefs = ref({});
+const gridRefs = ref({});
 const highlightedMessageId = ref(null);
+const highlightedConversationId = ref(null);
+const scrollRetryCount = ref(0);
 const displayModes = [
  { value: 'all', label: '全部' },
  { value: 'love', label: '💖 情书模式' },
@@ -263,6 +272,24 @@ function setMessageRef(letter, idx, el) {
  const key = letter.conversation.id + '-' + idx;
  if (el) {
  messageRefs.value[key] = el;
+ } else {
+ delete messageRefs.value[key];
+ }
+}
+function setGroupRef(letter, el) {
+ const key = letter.conversation.id;
+ if (el) {
+ groupRefs.value[key] = el;
+ } else {
+ delete groupRefs.value[key];
+ }
+}
+function setGridRef(letter, el) {
+ const key = letter.conversation.id;
+ if (el) {
+ gridRefs.value[key] = el;
+ } else {
+ delete gridRefs.value[key];
  }
 }
 function getMessagePosition(letter, idx) {
@@ -382,36 +409,89 @@ function getTagClass(tag) {
  return 'tag-freq';
  return 'tag';
 }
+
 function scrollToTarget() {
- if (!store.scrollTarget || !wallCanvas.value) return;
+ if (!store.scrollTarget) return;
  const { conversationId, messageId } = store.scrollTarget;
+
+ if (displayMode.value !== 'all') {
+ displayMode.value = 'all';
+ scrollRetryCount.value = 0;
+ setTimeout(scrollToTarget, 200);
+ return;
+ }
+
  const targetLetter = store.loveLetters.find(l => l.conversation.id === conversationId);
  if (!targetLetter) {
  store.clearScrollTarget();
  return;
  }
+
  const msgIndex = targetLetter.highlightedMessages.findIndex(m => m.id === messageId);
  if (msgIndex === -1) {
  store.clearScrollTarget();
  return;
  }
+
  nextTick(() => {
- const key = conversationId + '-' + msgIndex;
- const el = messageRefs.value[key];
- if (el) {
+ const msgKey = conversationId + '-' + msgIndex;
+ const msgEl = messageRefs.value[msgKey];
+ const groupEl = groupRefs.value[conversationId];
+ const gridEl = gridRefs.value[conversationId];
+
+ if (!msgEl || !groupEl || !gridEl) {
+ if (scrollRetryCount.value < 5) {
+ scrollRetryCount.value++;
+ setTimeout(scrollToTarget, 200);
+ } else {
+ store.clearScrollTarget();
+ scrollRetryCount.value = 0;
+ }
+ return;
+ }
+
+ scrollRetryCount.value = 0;
+ highlightedConversationId.value = conversationId;
  highlightedMessageId.value = messageId;
- el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+
+ const container = wallCanvas.value;
+ const groupRect = groupEl.getBoundingClientRect();
+ const containerRect = container.getBoundingClientRect();
+ const groupTop = groupRect.top - containerRect.top + container.scrollTop;
+ container.scrollTo({
+ top: groupTop - 80,
+ behavior: 'smooth'
+ });
+
+ setTimeout(() => {
+ const msgRect = msgEl.getBoundingClientRect();
+ const gridRect = gridEl.getBoundingClientRect();
+ const msgLeft = msgRect.left - gridRect.left + gridEl.scrollLeft;
+ gridEl.scrollTo({
+ left: msgLeft - gridEl.clientWidth / 2 + msgEl.offsetWidth / 2,
+ behavior: 'smooth'
+ });
+ }, 500);
+
  setTimeout(() => {
  highlightedMessageId.value = null;
- }, 3000);
- }
+ highlightedConversationId.value = null;
  store.clearScrollTarget();
+ }, 5000);
  });
 }
 
 watch(() => store.loveLetters.length, () => {
  if (store.loveLetters.length > 0 && store.scrollTarget) {
+ scrollRetryCount.value = 0;
  setTimeout(scrollToTarget, 300);
+ }
+});
+
+watch(() => store.scrollTarget, (newVal) => {
+ if (newVal) {
+ scrollRetryCount.value = 0;
+ setTimeout(scrollToTarget, 100);
  }
 });
 
@@ -423,6 +503,7 @@ onMounted(() => {
  }, { passive: true });
  }
  if (store.scrollTarget) {
+ scrollRetryCount.value = 0;
  setTimeout(scrollToTarget, 500);
  }
  });
@@ -518,6 +599,39 @@ onMounted(() => {
   position: relative;
   z-index: 2;
   margin-bottom: 3rem;
+  transition: all 0.5s;
+  border-radius: 20px;
+  padding: 0.5rem;
+}
+
+.letter-group.group-search-highlight {
+  background: linear-gradient(135deg, rgba(255, 179, 71, 0.15) 0%, rgba(255, 218, 139, 0.1) 100%);
+  border: 3px dashed #ffb347;
+  box-shadow: 0 0 40px rgba(255, 179, 71, 0.35);
+  animation: groupGlow 1.5s ease-in-out infinite alternate;
+}
+
+@keyframes groupGlow {
+  from {
+    box-shadow: 0 0 30px rgba(255, 179, 71, 0.25);
+  }
+  to {
+    box-shadow: 0 0 50px rgba(255, 179, 71, 0.5);
+  }
+}
+
+.target-indicator {
+  display: inline-block;
+  animation: bounce 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes bounce {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-4px) scale(1.15);
+  }
 }
 
 .group-title {
@@ -594,17 +708,49 @@ onMounted(() => {
 }
 
 .message-exhibit.search-highlight {
-  border-color: #ffb347 !important;
-  box-shadow: 0 0 30px rgba(255, 179, 71, 0.6) !important;
-  animation: searchPulse 1s ease-in-out infinite alternate;
+  border-color: #ff9500 !important;
+  border-width: 4px !important;
+  box-shadow: 0 0 40px rgba(255, 149, 0, 0.7) !important;
+  animation: searchPulse 0.8s ease-in-out infinite alternate;
+  transform: scale(1.05) translateY(-4px);
+  z-index: 10;
+  position: relative;
+}
+
+.message-exhibit.search-highlight::after {
+  content: '🎯 在这里';
+  position: absolute;
+  top: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, #ff6b35, #f7931e);
+  color: white;
+  padding: 4px 14px;
+  border-radius: 16px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  white-space: nowrap;
+  box-shadow: 0 4px 15px rgba(255, 107, 53, 0.4);
+  animation: tagBounce 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes tagBounce {
+  from {
+    transform: translateX(-50%) translateY(0);
+  }
+  to {
+    transform: translateX(-50%) translateY(-4px);
+  }
 }
 
 @keyframes searchPulse {
   from {
-    box-shadow: 0 0 20px rgba(255, 179, 71, 0.4);
+    box-shadow: 0 0 25px rgba(255, 149, 0, 0.5), 0 0 50px rgba(255, 149, 0, 0.2);
+    border-color: #ffb347 !important;
   }
   to {
-    box-shadow: 0 0 35px rgba(255, 179, 71, 0.8);
+    box-shadow: 0 0 45px rgba(255, 149, 0, 0.9), 0 0 80px rgba(255, 149, 0, 0.4);
+    border-color: #ff6b00 !important;
   }
 }
 
