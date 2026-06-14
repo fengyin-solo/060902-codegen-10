@@ -90,7 +90,8 @@
                 sent: msg.isSent, 
                 received: msg.isReceived,
                 'has-highlight': msg.highlights && msg.highlights.length > 0,
-                'selected': selectedMsg === msg.id
+                'selected': selectedMsg === msg.id,
+                'search-highlight': highlightedMessageId === msg.id
               }"
               :ref="el => setMessageRef(letter, idx, el)"
               @click="selectMessage(letter, msg)"
@@ -209,7 +210,7 @@
   </div>
 </template>
 
-<script setup>import { ref, computed, onMounted, nextTick } from 'vue';
+<script setup>import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { store } from '@/store';
 const router = useRouter();
@@ -227,6 +228,7 @@ const hangUpOptions = ref({
  anonymous: true
 });
 const messageRefs = ref({});
+const highlightedMessageId = ref(null);
 const displayModes = [
  { value: 'all', label: '全部' },
  { value: 'love', label: '💖 情书模式' },
@@ -380,12 +382,48 @@ function getTagClass(tag) {
  return 'tag-freq';
  return 'tag';
 }
+function scrollToTarget() {
+ if (!store.scrollTarget || !wallCanvas.value) return;
+ const { conversationId, messageId } = store.scrollTarget;
+ const targetLetter = store.loveLetters.find(l => l.conversation.id === conversationId);
+ if (!targetLetter) {
+ store.clearScrollTarget();
+ return;
+ }
+ const msgIndex = targetLetter.highlightedMessages.findIndex(m => m.id === messageId);
+ if (msgIndex === -1) {
+ store.clearScrollTarget();
+ return;
+ }
+ nextTick(() => {
+ const key = conversationId + '-' + msgIndex;
+ const el = messageRefs.value[key];
+ if (el) {
+ highlightedMessageId.value = messageId;
+ el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+ setTimeout(() => {
+ highlightedMessageId.value = null;
+ }, 3000);
+ }
+ store.clearScrollTarget();
+ });
+}
+
+watch(() => store.loveLetters.length, () => {
+ if (store.loveLetters.length > 0 && store.scrollTarget) {
+ setTimeout(scrollToTarget, 300);
+ }
+});
+
 onMounted(() => {
  nextTick(() => {
  const container = wallCanvas.value;
  if (container) {
  container.addEventListener('scroll', () => {
  }, { passive: true });
+ }
+ if (store.scrollTarget) {
+ setTimeout(scrollToTarget, 500);
  }
  });
 });
@@ -553,6 +591,21 @@ onMounted(() => {
 .message-exhibit.selected {
   border-color: var(--love-red);
   box-shadow: 0 0 20px rgba(231, 76, 60, 0.3);
+}
+
+.message-exhibit.search-highlight {
+  border-color: #ffb347 !important;
+  box-shadow: 0 0 30px rgba(255, 179, 71, 0.6) !important;
+  animation: searchPulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes searchPulse {
+  from {
+    box-shadow: 0 0 20px rgba(255, 179, 71, 0.4);
+  }
+  to {
+    box-shadow: 0 0 35px rgba(255, 179, 71, 0.8);
+  }
 }
 
 .exhibit-header {
